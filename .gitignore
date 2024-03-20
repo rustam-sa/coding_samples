@@ -1,0 +1,5 @@
+work_dir*
+__pycache__
+cachedir
+*log*
+find_wins_test.csv
