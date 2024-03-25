@@ -31,7 +31,7 @@ from pprint import pprint
 
 
 # Custom module imports for trading data handling and preprocessing
-from trader import Trader # custom class for interacting with exchange API (kucoin exchange used in this case)
+from data_fetcher import DataFetcher # custom class for interacting with exchange API (kucoin exchange used in this case)
 from directory_manager import DirectoryManager # custom class for easier directory management
 from preprocessor import Preprocessor # custom class for preprocessing financial data
 
@@ -235,9 +235,9 @@ if __name__ == "__main__":
 
 
     # get unprocessed data
-    client = Trader(symbol, data_params['timeframe'])
-    df = client.get_mass_candles(data_params['span'], delay=data_params['delay'])   
-    client.check_timestamp_sequence(df)
+    data_fetcher = DataFetcher(symbol, data_params['timeframe'])
+    df = data_fetcher.get_mass_candles(data_params['span'], delay=data_params['delay'])   
+    data_fetcher.check_timestamp_sequence(df)
     original_data_dir = dm.create_new_dir("original_data")
     # save unprocessed data
     df.to_csv(f"{original_data_dir}/{symbol}_{data_params['timeframe']}_{data_params['span']}.csv", 
