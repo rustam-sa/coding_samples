@@ -1,6 +1,7 @@
 import time
 import csv
 import pandas as pd
+import numpy as np 
 
 from datetime import datetime
 
@@ -24,11 +25,25 @@ def time_it(func):
 
 class DataFetcher:
     def __init__(self, symbol, timeframe):
-
-        pass
-
-    def check_timestamp_sequence(self, df):
+        self.symbol = symbol
+        self.timeframe = timeframe
+        self.timeframes_in_minutes = {
+        "1min": 1,
+        "3min": 3,
+        "5min": 5, 
+        "15min": 15,
+        "30min": 30,
+        "1hour": 60,
+        "2hour": 120,
+        "4hour": 240,
+        "6hour": 360,
+        "8hour": 480,
+        "12hour": 720,
+        "1day": 1440,
+        "1week": 10080
+        }
         
+    def check_timestamp_sequence(self, df):
         res = {
             
             "first_timestamp": 0,
@@ -53,7 +68,7 @@ class DataFetcher:
     def get_candles(self, symbol="ETH-USDT", timeframe="5min", start_at=None, end_at=None, delay=0):
         time.sleep(delay)
         if start_at == None and end_at == None:
-            start_at, end_at = self.generate_start_and_end()
+            start_at, end_at = self._generate_start_and_end()
         payload = {"symbol": symbol, 
                    "startAt": start_at,
                    "endAt": end_at, 
@@ -98,3 +113,13 @@ class DataFetcher:
         df = pd.concat(data).reset_index(drop=True)
         self.check_timestamp_sequence(df)
         return df
+    
+    def _generate_start_and_end(self):
+        now = datetime.now()
+        now_as_unixtimestamp = int(time.mktime(now.timetuple()))
+        timeframe_in_minutes = self.timeframes_in_minutes[self.timeframe]
+        timeframe_in_seconds = timeframe_in_minutes * 60
+        segment_length = timeframe_in_seconds * 1500
+        start = str(now_as_unixtimestamp - segment_length)
+        end = str(now_as_unixtimestamp)
+        return start, end
