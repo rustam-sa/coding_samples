@@ -8,8 +8,7 @@ allowing for the organization of files and other directories within a specified 
 from pathlib import Path
 
 class DirectoryManager:
-    """
-    A class to manage directories within a specified main directory.
+    """A class to manage directories within a specified main directory.
     
     Attributes:
         main_directory (Path): The main directory within which new directories will be managed.
@@ -20,8 +19,7 @@ class DirectoryManager:
     """
 
     def __init__(self, main_directory):
-        """
-        Initialize the DirectoryManager with a specified main directory.
+        """Initialize the DirectoryManager with a specified main directory.
         
         Args:
             main_directory (str): The path to the main directory to be managed.
@@ -30,8 +28,7 @@ class DirectoryManager:
         self.create_main_directory()
         
     def create_main_directory(self):
-        """
-        Create the main directory if it doesn't already exist.
+        """Create the main directory if it doesn't already exist.
         
         This method checks if the main directory exists, and if not, creates it.
         Outputs a message indicating whether the directory was created or already exists.
@@ -44,8 +41,7 @@ class DirectoryManager:
             print(f"Directory '{str(new_dir_name)}' already exists.")
         
     def create_new_dir(self, new_dir_name):
-        """
-        Create a new subdirectory within the main directory if it doesn't already exist.
+        """Create a new subdirectory within the main directory if it doesn't already exist.
         
         Args:
             new_dir_name (str): The name of the new subdirectory to create.
