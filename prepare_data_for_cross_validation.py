@@ -1,5 +1,4 @@
-"""
-Cross-Validation Data Segmentation and Preprocessing for training ML models and backtesting.
+"""Cross-Validation Data Segmentation and Preprocessing for training ML models and backtesting.
 
 This script acquires OHLCV data for selected crypto currency via kucoing exchange API
 segments trading data for use in cross-validation, 
