@@ -7,8 +7,6 @@ from logging_tools import time_it
 from headers import ht, process_request
 
 
-
-
 class DataFetcher:
     """Fetch and process financial data for a given symbol and timeframe.
     

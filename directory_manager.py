@@ -1,5 +1,4 @@
-"""
-Utility module for creating and managing directories within a file system.
+"""Utility module for creating and managing directories within a file system.
 
 This module provides a class that simplifies the process of creating and managing directories,
 allowing for the organization of files and other directories within a specified main directory.

@@ -12,7 +12,7 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, MinMaxScaler, RobustScaler, Normalizer, FunctionTransformer
-from trader import Trader
+from data_analyzer import DataAnalyzer
 
 pd.set_option('display.max_columns', None)
 cachedir = 'cachedir'
@@ -58,10 +58,7 @@ class Preprocessor:
         self.params = params
         self.cols = cols
         self.df = dataframe
-        self.trader = Trader(
-            self.params['symbol'], 
-            self.params['timeframe']
-                             )
+        self.data_analyzer = DataAnalyzer()
         self.find_wins = memory.cache(self.find_wins)
         self.model_id = params['model_id']
         self.n_steps = n_steps
@@ -687,30 +684,30 @@ class Preprocessor:
     
     def add_indicators(self):
         if "rsi" in self.cols:
-            self.df['rsi'] = self.trader.rsi(self.df, self.params['rsi_span'])
+            self.df['rsi'] = self.data_analyzer.rsi(self.df, self.params['rsi_span'])
         if "stoch_rsi" in self.cols:
-            self.df['stoch_rsi'] = self.trader.stochrsi(self.df, self.params['rsi_span'])
+            self.df['stoch_rsi'] = self.data_analyzer.stochrsi(self.df, self.params['rsi_span'])
         if "atr" in self.cols:
-            self.df['atr'] = self.trader.atr(self.df, self.params['atr_period'])
+            self.df['atr'] = self.data_analyzer.atr(self.df, self.params['atr_period'])
         if "obv" in self.cols:
-            self.df['obv'] = self.trader.obv(self.df)
+            self.df['obv'] = self.data_analyzer.obv(self.df)
     
         indicators = {}
-        indicators['divergence'] = self.trader.divergence(self.df)
+        indicators['divergence'] = self.data_analyzer.divergence(self.df)
         for n in range(1, self.n_steps + 1):
             if f"ema{n}" in self.cols:
-                indicators[f'ema{n}'] = self.trader.ema(self.df, self.params[f'ema_period_{n}'])
+                indicators[f'ema{n}'] = self.data_analyzer.ema(self.df, self.params[f'ema_period_{n}'])
             if f"volume_ema{n}" in self.cols:
-                indicators[f'volume_ema{n}'] = self.trader.volume_ema(self.df, self.params[f'volume_ema_period_{n}'])
+                indicators[f'volume_ema{n}'] = self.data_analyzer.volume_ema(self.df, self.params[f'volume_ema_period_{n}'])
             if f"rsi{n}" in self.cols:
-                indicators[f'rsi{n}'] = self.trader.rsi(self.df, self.params[f'rsi_span{n}'])
+                indicators[f'rsi{n}'] = self.data_analyzer.rsi(self.df, self.params[f'rsi_span{n}'])
             if f"stoch_rsi{n}" in self.cols:
-                indicators[f'stoch_rsi{n}'] = self.trader.stochrsi(self.df, self.params[f'rsi_span{n}'])
+                indicators[f'stoch_rsi{n}'] = self.data_analyzer.stochrsi(self.df, self.params[f'rsi_span{n}'])
             if f"atr{n}" in self.cols:
-                indicators[f'atr{n}'] = self.trader.atr(self.df, self.params[f'atr_period{n}'])
-            # indicators[f'mfi{n}'] = self.trader.mfi(self.df, self.params[f'mfi_period{n}'])
-            # indicators[f'top_bb{n}'], indicators[f'bottom_bb{n}'] = self.trader.bollinger_bands(self.df, self.params[f'bb_span_{n}'])
-            # indicators[f'upperband{n}'], indicators[f'lowerband{n}'], indicators[f'in_uptrend{n}'] = self.trader.supertrend(
+                indicators[f'atr{n}'] = self.data_analyzer.atr(self.df, self.params[f'atr_period{n}'])
+            # indicators[f'mfi{n}'] = self.data_analyzer.mfi(self.df, self.params[f'mfi_period{n}'])
+            # indicators[f'top_bb{n}'], indicators[f'bottom_bb{n}'] = self.data_analyzer.bollinger_bands(self.df, self.params[f'bb_span_{n}'])
+            # indicators[f'upperband{n}'], indicators[f'lowerband{n}'], indicators[f'in_uptrend{n}'] = self.data_analyzer.supertrend(
             #     self.df, params[f'supertrend_period{n}'])
         
         indicators = pd.DataFrame(indicators)

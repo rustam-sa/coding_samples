@@ -3,3 +3,4 @@ __pycache__
 cachedir
 *log*
 find_wins_test.csv
+trader.py
