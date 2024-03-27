@@ -12,6 +12,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, MinMaxScaler, RobustScaler, Normalizer, FunctionTransformer
+
+from logging_tools import time_it
 from data_analyzer import DataAnalyzer
 
 pd.set_option('display.max_columns', None)
@@ -19,38 +21,32 @@ cachedir = 'cachedir'
 memory = joblib.Memory(cachedir, verbose=0)
 
 
-def time_it(func):
-    
-    def wrap(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        end = time.time()
-        
-        msg = func.__name__, end-start, datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-        things = args, kwargs
-        print(msg)
-        print(things)
-        return result
-    
-    return wrap
-
-
-# def get_most_recent_csv_files(sub_directory, last_n=2):
-#     """
-#     return list of pandas dataframes of most recent last_n files
-#     """
-#     current_dir = os.getcwd()
-#     all_file_names = glob.glob(f'{current_dir}/{sub_directory}/*.csv')
-#     all_file_names_sorted = sorted(all_file_names, key=os.path.getctime, reverse=False)
-#     target_file_names = all_file_names_sorted[-last_n:]
-#     pprint(f'Accessing files: {target_file_names}')
-#     data_frames = [pd.read_csv(x, index_col=0) for x in target_file_names]
-#     return data_frames
-
-
 class Preprocessor:
-    
+
     def __init__(self, params, dataframe, cols, steps, n_steps, save_directory):
+        """Initialize a Preprocessor instance with configuration parameters, input data, and processing details.
+        
+        This constructor sets up the preprocessing environment with specified parameters, data, and file paths
+        for saving results. It prepares the instance for performing a variety of preprocessing tasks on
+        financial time series data, including scaling, transforming, segmenting, and generating technical indicators.
+
+        Parameters:
+        - params (dict): A dictionary containing preprocessing parameters such as 'long_or_short', 'candle_span', 
+        'atr_multiplier', 'distance_threshold', and 'model_id'. These parameters are used for defining
+        the trading strategy, indicator calculations, and model identification.
+        - dataframe (pd.DataFrame): The input data to be preprocessed, expected to be a pandas DataFrame
+        containing time series data of financial markets.
+        - cols (list of str): A list of column names from 'dataframe' that will be specifically processed.
+        - steps (list of int): A list defining specific steps or intervals to be used in certain preprocessing
+        tasks, such as calculating moving averages or segmenting data.
+        - n_steps (int): The number of steps to consider for calculations that require a dynamic range,
+        like generating multiple moving averages.
+        - save_directory (str or Path): The directory path where processed data and other outputs will be saved.
+        
+        Attributes:
+        - Initializes various instance attributes based on the parameters provided, including settings
+        for indicators, a DataAnalyzer instance for calculating technical indicators, and paths for saving outputs.
+        """
         self.long_or_short = params['long_or_short']
         self.candle_span = params['candle_span']
         self.atr_multiplier = params['atr_multiplier']
@@ -67,6 +63,32 @@ class Preprocessor:
         self.steps = steps
     
     def _return_index_of_take_profit(self, index):
+        """Determine the index where a take-profit or stop-loss condition is triggered.
+
+        This method iterates through a specified segment of the DataFrame starting from the given index
+        and checks if the price hits the take-profit or stop-loss levels defined by 'upper_stop' and 'lower_stop'.
+        The method returns the index of the first occurrence where the condition is met. If the conditions
+        are not met within the span of 'candle_span' periods, it returns np.Inf to indicate that the take-profit
+        or stop-loss was not triggered.
+
+        Parameters:
+        - index (int): The starting index from which to check for take-profit or stop-loss conditions.
+
+        Returns:
+        - float: The index at which the take-profit or stop-loss condition is first met. Returns np.Inf if the
+        conditions are not met within the 'candle_span' periods from the starting index.
+
+        Notes:
+        - This method relies on 'upper_stop' and 'lower_stop' columns in the DataFrame, which should be set
+        prior to calling this method. These columns represent the take-profit and stop-loss price levels,
+        respectively.
+        - The 'candle_span' attribute of the class determines how far ahead (in terms of index) this method
+        checks for a condition trigger. The check is inclusive of the start index and goes up to
+        'index + candle_span'.
+        - The method supports both long and short positions as specified by the 'long_or_short' attribute
+        of the class. For long positions, it checks if the 'high' price crosses 'upper_stop'. For short
+        positions, it checks if the 'low' price crosses 'lower_stop'.
+        """
         df_len = len(self.df)
         if index + self.candle_span >= df_len:
             return np.Inf
@@ -105,9 +127,21 @@ class Preprocessor:
                     return min(lower_triggers)
                 else: 
                     return np.Inf
-                
     
     def save_weights(self, segments, column_name="win"):
+        """Save the distribution of win/loss or other categorical outcomes as weights into a file.
+
+        This method takes segmented data and calculates the distribution of a specified categorical column
+        (e.g., win/loss). It then saves this distribution as weights in a pickle file for later use, such as
+        sample weighting in machine learning models. The weights represent the normalized frequency of each
+        category within the specified column across all segments.
+
+        Parameters:
+        - segments (list of pd.DataFrame): A list of pandas DataFrame segments from the preprocessed data.
+        Each segment is expected to contain at least the column specified by `column_name`.
+        - column_name (str, optional): The name of the column for which to calculate the weights. This column
+        should contain categorical data (e.g., win/loss indicators). Defaults to "win".
+        """
         labels = [s[column_name] for s in segments]
         weights = [l.value_counts(normalize=True)*100 for l in labels]
         temp_objects_directory = f"G:/coding_projects/model_creation_for_klb/labeled_data/{self.trade_direction}/temp_objects/weights.pkl"
@@ -115,9 +149,24 @@ class Preprocessor:
         joblib.dump(weights, temp_objects_directory)
         print("Saved weights from preprocessor.")
         print(f"Path: {temp_objects_directory}.")
-        
     
     def load_weights(self, num_of_segments):
+        """Load the weights from a previously saved file and selects weights for a specified number of segments.
+
+        This method reads a pickle file containing saved weights, which represent the distribution of outcomes
+        (e.g., win/loss) across various data segments. It then selects a subset of these weights corresponding
+        to the specified number of segments, normalizes these selected weights to sum up to 100, and returns
+        them.
+
+        Parameters:
+        - num_of_segments (int): The number of segments for which to load and normalize weights. This determines
+        how many of the most recently saved weights to include in the output.
+
+        Returns:
+        - pd.Series: A pandas Series containing the normalized weights for the specified number of segments.
+        The indices correspond to the categories (e.g., win/loss), and the values represent the percentage
+        weight of each category.
+        """
         weights_dir = f"G:/coding_projects/model_creation_for_klb/labeled_data/{self.trade_direction}/temp_objects/weights.pkl"
         weights_dir = Path(weights_dir)
         raw_weights = joblib.load(weights_dir)
@@ -128,11 +177,29 @@ class Preprocessor:
         total = weights.sum()
         weights = weights.apply(lambda x: (x / total) * 100)
         return weights
-        
     
     @staticmethod
     def profit_check(df, long_or_short, distance_percentage_threshold):
-        
+        """Check whether each trade in the DataFrame could be potentially profitable based on 
+        the distance percentage threshold from the entry price to the stop levels.
+
+        This method calculates whether the potential profit (for a long trade) or loss (for a short trade)
+        exceeds a specified threshold. 
+
+        Parameters:
+        - df (pd.DataFrame): The DataFrame containing the trade data. Must include 'close', 'upper_stop', 
+        and 'lower_stop' columns.
+        - long_or_short (str): A string indicating the type of trade. "long" or "short". 
+        - distance_percentage_threshold (float): The minimum required percentage distance between the entry price 
+        ('close') and the target price.
+
+        Returns:
+        - pd.Series: A series of binary indicators (1 or 0) for each trade in the DataFrame, where 1 indicates that 
+        the trade is potentially profitable based on the distance percentage threshold.
+
+        Raises:
+        - ValueError: If `long_or_short` is not one of the acceptable values ("long" or "short").
+        """
         if long_or_short == "short":
             target_price = df['lower_stop']
         else: 
@@ -142,30 +209,51 @@ class Preprocessor:
         return profitable.astype(int)
         
     def find_wins(self):
+        """Identify winning trades based on take-profit criteria and update the DataFrame.
+
+        Computes 'upper_stop' and 'lower_stop' for each row, determines if these levels are reached
+        within 'candle_span' periods, and marks trades as wins (1) if conditions are met, otherwise as losses (0).
+        Updates the DataFrame in place by adding a 'win' column with these indicators and removes temporary columns.
+        
+        Returns:
+        - pd.Series: Series of win indicators (1 for win, 0 for loss) for all trades in the DataFrame.
+        """
         self.df = self.df[::-1].reset_index(drop=True)
         self.df['upper_stop'] = self.df['close'] * (1 + self.distance_threshold)
         self.df['lower_stop'] = self.df['close'] * (1 - self.distance_threshold)
         self.df['took_profit_index'] = self.df.index.map(self._return_index_of_take_profit)
         self.df['win'] = np.where(self.df['took_profit_index'] != np.Inf, 1, 0)
-        # self.df['profitable'] = self.profit_check(self.df, self.long_or_short, self.distance_threshold)
-        # self.df['win'] = np.where(self.df['win'] + self.df['profitable'] == 2, 1, 0)
         self.df = self.df.drop(['upper_stop', 'lower_stop', 'took_profit_index'], axis=1)
         self.df = self.df[::-1].reset_index(drop=True)
         self.df.to_csv("find_wins_test.csv")
-            
-            
         return self.df['win']
-    
-    
-    # def diff(self, column):
-    #     col_reversed = self.df[column][::-1]
-    #     return col_reversed.diff()[::-1]
-    
+
     def diff(self, column):
+        """Calculate the difference between consecutive elements in a given column.
+
+        This method reverses the order of the DataFrame, computes the difference between
+        consecutive elements in the specified column, and then reverses the order back to
+        the original. It's useful for identifying changes between periods in time series data.
+
+        Parameters:
+        - column (pd.Series): A pandas Series for which the difference between consecutive
+        elements will be calculated.
+
+        Returns:
+        - pd.Series: A Series containing the differences, with the same index as the input column.
+        """
         col_reversed = column[::-1]
         return col_reversed.diff()[::-1]
         
     def segment(self):
+        """Divide the DataFrame into segments and save each as a CSV file.
+    
+        Segments the data based on 'num_of_segments' defined in the class parameters, calculates the
+        size of each segment, and iterates over the DataFrame to split it accordingly. Each segment is
+        saved as a separate CSV file in the specified save directory, including any sample weights if present.
+
+        Note: Assumes the DataFrame is already sorted in descending order by timestamp.
+        """
         line_count = len(self.df)
         segment_size = int(line_count/self.params['num_of_segments'])
         pprint(f"Segment size: {segment_size}")
@@ -180,7 +268,6 @@ class Preprocessor:
         dataframe_count = self.params['num_of_segments']
         with open(f'{self.save_directory}/dataframe_count.txt', 'w') as f:
             f.write(str(dataframe_count))
-        
         for i, segment in enumerate(segments[::-1]):
             time.sleep(0.5)
             end_timestamp = int(segment['timestamp'].iloc[0])
@@ -191,19 +278,45 @@ class Preprocessor:
                 weights = segment['sample_weights']
                 joblib.dump(weights, f"{self.save_directory}/train_data_sample_weights_{i}.pkl")
                 segment = segment.drop(['sample_weights'], axis=1)
-                
             segment.to_csv(segment_filename)
             pprint(f"{segment_filename} saved")
-        
             
     def dataframe_count_override(self, num):
+        """Override the count of dataframes in the specified save directory with a new value.
+    
+        Write the given number to a text file named 'preprocessed_dataframe_count.txt' within the save directory.
+        This action updates the recorded count of segmented dataframes, useful for manual adjustments or
+        corrections to the number of data segments after preprocessing.
+
+        Parameters:
+        - num (int): The new count of dataframes to record.
+        """
         with open(f'labeled_data/{self.long_or_short}/preprocessed_dataframe_count.txt', 'w') as f:
             f.write(str(num))
             
-            
     def create_bagging_segments_with_replacement(self, segment_size):
-        
+        """Create bagging segments from the dataset with replacement and save each as a CSV file.
+
+        Randomly selects rows to form segments of a specified size, with replacement, to create bagged versions
+        of the original data. This technique is useful for ensemble methods that benefit from bootstrapping.
+        Each segment is saved as a separate CSV file in the 'save_directory'. Sample weights, if present, are
+        also handled and saved in a corresponding pickle file.
+
+        Parameters:
+        - segment_size (int): The number of rows each segment should contain.
+        """
+
         def save_segment(segment, segment_number):
+            """Save a given data segment to a CSV file, including sample weights if present.
+
+            Serializes the segment as a CSV file named according to its segment number and other parameters defined
+            in the class. If 'sample_weights' are included in the segment columns, they are extracted and saved separately
+            in a pickle file. 
+
+            Parameters:
+            - segment (pd.DataFrame): The data segment to be saved.
+            - segment_number (int): The identifier for the segment, used in naming the output file.
+            """
             segment = pd.DataFrame(segment, columns = self.df.columns)
             segment = segment.drop(['timestamp'], axis=1)
             if 'sample_weights' in segment.columns.to_list():
@@ -233,18 +346,29 @@ class Preprocessor:
         with open(f'{save_directory}/{self.long_or_short}/preprocessed_dataframe_count.txt', 'w') as f:
             f.write(str(dataframe_count))
         
-        # for i, segment in enumerate(segments[::-1]):
-        #     time.sleep(0.5)
-        #     segment_filename = f"{save_directory}/{self.long_or_short}/segment_{i}_{self.params['symbol']}-{self.params['timeframe']}-{suffix}-distance_percentage_{self.distance_threshold}_{self.long_or_short}.csv"
-        #     segment.to_csv(segment_filename)
-        #     pprint(f"{segment_filename} saved")
-        
-        
-
-        
     def add_preprocessing_row(self):
+        """Append a row with the current preprocessing parameters to a tracking DataFrame and save it.
+
+        This method creates or updates a CSV file that logs the preprocessing parameters used in each run.
+        It ensures that each set of parameters is recorded for reference. The method handles the creation 
+        of a new row in the log DataFrame with the current parameters and saves this updated log back to 
+        a CSV file.
+        """
         
         def insert_missing_columns(columns:list, df):
+            """Insert missing columns into a DataFrame with default values.
+
+            Iterates through a list of column names and adds any that are missing from the DataFrame. Newly added
+            columns are initialized with default values. This ensures the DataFrame has a consistent structure,
+            especially before processing steps that require specific columns.
+
+            Parameters:
+            - columns (list): A list of column names to ensure are present in the DataFrame.
+            - df (pd.DataFrame): The DataFrame to check and modify.
+
+            Returns:
+            - pd.DataFrame: The updated DataFrame with all specified columns present.
+            """
             columns = np.array(columns)
             csv_columns = np.array(list(df.columns))
             cols_to_insert = np.setdiff1d(columns, csv_columns)
@@ -265,10 +389,21 @@ class Preprocessor:
     
     @staticmethod
     def apply_rolling_window_scaling(segment, window_size):
-        
+        """Apply min-max scaling to a segment using a rolling window approach.
+
+        Scales each column in the segment based on minimum and maximum values within a rolling window. This method
+        is designed for time-series data where local context (defined by the window size) is important for scaling.
+        The scaling formula used is (value - min) / (max - min), applied within each window for each column.
+
+        Parameters:
+        - segment (pd.DataFrame): The data segment to scale. Expected to have numerical columns.
+        - window_size (int): The size of the rolling window to use for calculating min and max values for scaling.
+
+        Returns:
+        - pd.DataFrame: The scaled segment, with values transformed to a 0-1 scale based on local window min and max.
+        """
         def rolling_window_scaler(arr, window_size):
-            """
-            Apply rolling window scaling on a 2D numpy array where data is ordered 
+            """Apply rolling window scaling on a 2D numpy array where data is ordered 
             in descending time (top row is newest). Drops rows that don't have a
             full rolling window.
             
@@ -302,36 +437,42 @@ class Preprocessor:
             
             return scaled_arr
         
-        
         segment = segment.dropna()
         segment_parts = []
         segment_wins_timestamps = segment[['timestamp', 'win']]
         segment_wins_timestamps = segment_wins_timestamps.iloc[:-window_size + 1]
         segment_parts.append(segment_wins_timestamps)
         segment = segment.drop(['timestamp', 'win'], axis=1)
-        
         numerical_segment = segment.copy().select_dtypes(include=['number'])
         non_numerical_df = segment.select_dtypes(exclude=['number'])
         non_numerical_df = non_numerical_df.iloc[:-window_size + 1]
         segment_parts.append(non_numerical_df)
-        
         saved_numerical_columns = numerical_segment.columns
         segment_np = np.array(numerical_segment)
         scaled_segment_np = rolling_window_scaler(segment_np, window_size)
-        
         scaled_segment_pd = pd.DataFrame(scaled_segment_np, columns=saved_numerical_columns)
         segment_parts.append(scaled_segment_pd)
-        
         scaled_segment_pd = pd.concat(segment_parts, axis=1)
         return scaled_segment_pd
     
-    
     @staticmethod
     def apply_rolling_window_standardization(segment, window_size):
-        
+        """Standardize a segment using a rolling window approach.
+
+        This method computes the z-score for each value in the segment based on the mean and standard deviation
+        within a rolling window. This approach is useful for time-series data where the statistical properties
+        can vary over time. Standardization formula used is (value - mean) / std within each window for each column.
+
+        Parameters:
+        - segment (pd.DataFrame): The data segment to standardize. Expected to have numerical columns.
+        - window_size (int): The size of the rolling window to use for calculating mean and standard deviation.
+
+        Returns:
+        - pd.DataFrame: The standardized segment, with each value transformed to a z-score based on local window statistics.
+        """
+
         def rolling_window_standardize(arr, window_size):
-            """
-            Apply a rolling window standardization on a numpy array.
+            """Apply a rolling window standardization on a numpy array.
             
             Parameters:
             - arr: A 2D numpy array where rows are in descending order.
@@ -369,25 +510,28 @@ class Preprocessor:
         segment_wins_timestamps = segment_wins_timestamps.iloc[:-window_size + 1]
         segment_parts.append(segment_wins_timestamps)
         segment = segment.drop(['timestamp', 'win'], axis=1)
-        
         numerical_segment = segment.copy().select_dtypes(include=['number'])
         non_numerical_df = segment.select_dtypes(exclude=['number'])
         non_numerical_df = non_numerical_df.iloc[:-window_size + 1]
         segment_parts.append(non_numerical_df)
-        
         saved_numerical_columns = numerical_segment.columns
         segment_np = np.array(numerical_segment)
         scaled_segment_np = rolling_window_standardize(segment_np, window_size)
-        
         scaled_segment_pd = pd.DataFrame(scaled_segment_np, columns=saved_numerical_columns)
         segment_parts.append(scaled_segment_pd)
-        
         scaled_segment_pd = pd.concat(segment_parts, axis=1)
         return scaled_segment_pd
     
-    
     @staticmethod
     def apply_onehot(segment):
+        """Convert categorical column 'divergence' in the segment to one-hot encoded columns.
+
+        Parameters:
+        - segment (pd.DataFrame): The data segment containing the 'divergence' column.
+
+        Returns:
+        - pd.DataFrame: The segment with 'divergence' replaced by one-hot encoded columns.
+        """
         divergence = segment[['divergence']]
         print(divergence)
         categories = [['no divergence', 'bullish', 'bearish']]
@@ -403,8 +547,22 @@ class Preprocessor:
         print(segment)
         return segment
     
-    
     def custom_preprocess(self, scaling_window_size, scramble, bagging):
+        """Perform custom preprocessing on the DataFrame including scaling, indicator addition, and optional scrambling or bagging.
+
+        Applies a series of preprocessing steps to the DataFrame stored in this instance. These steps include adding technical
+        indicators, scaling numerical features using a specified window size, optionally scrambling the data for randomization,
+        and optionally creating bagging segments with replacement. Finalizes by saving the preprocessed data and
+        updating a log with preprocessing parameters.
+
+        Parameters:
+        - scaling_window_size (int): The size of the window to use for rolling window scaling operations.
+        - scramble (bool): If True, randomize the order of the DataFrame rows.
+        - bagging (bool): If True, create bagging segments from the data with replacement.
+
+        Returns:
+        - pd.DataFrame: The preprocessed DataFrame after all operations have been applied.
+        """
         numerical_features = self.df.select_dtypes(include='number').columns.tolist()
         self.df[numerical_features] = self.df[numerical_features] + 0.0001
         self.find_wins()
@@ -415,7 +573,6 @@ class Preprocessor:
         dropped_count = with_nas - without_nas
         pprint(f"Dropped {dropped_count} NaN rows. Index reset.")
         diff = ['close', 'volume', 'amount', 'obv']
-        
         print(self.df)
         no_log = ['obv', 'divergence', 'timestamp', 'win']
         # cols_to_log = [col for col in self.df.columns if col not in no_log]
@@ -458,8 +615,21 @@ class Preprocessor:
         self.add_preprocessing_row()
         return self.df
     
-    
     def custom_preprocess2(self, scaling_window_size, scramble, bagging):
+        """Apply an alternative custom preprocessing sequence to the DataFrame.
+
+        Performs a series of preprocessing operations tailored to financial time series data. 
+        Includes scaling based on a rolling window, computing differences, logging transformations, 
+        and optionally scrambling the dataset or creating bagged segments.
+
+        Parameters:
+        - scaling_window_size (int): Defines the window size for rolling scaling operations.
+        - scramble (bool): If True, the dataset rows are randomized to remove temporal ordering.
+        - bagging (bool): If True, generates bagged segments of the dataset with replacement for ensemble training.
+
+        Returns:
+        - pd.DataFrame: The DataFrame after applying the specified preprocessing operations.
+        """
         numerical_features = self.df.select_dtypes(include='number').columns.tolist()
         self.df[numerical_features] = self.df[numerical_features] + 0.0001
         self.find_wins()
@@ -515,6 +685,18 @@ class Preprocessor:
     
     @staticmethod
     def rolling_window_robust_scaler_ascending(arr, window_size):
+        """Scale an array using a robust method with a rolling window, assuming ascending order.
+
+        Applies a robust scaling technique to a numpy array based on a rolling window approach. 
+        The array is assumed to be in ascending order with the most recent data at the end.
+
+        Parameters:
+        - arr (np.array): The input array to be scaled. Expected to be a 2D array where scaling is applied column-wise.
+        - window_size (int): The size of the rolling window used for calculating the median and IQR.
+
+        Returns:
+        - np.array: The scaled array, with each window's values transformed based on its local median and IQR.
+        """
     # Ensure input is a numpy array
         arr = np.array(arr)
         
@@ -560,9 +742,23 @@ class Preprocessor:
                 scaled_arr[start:end, col] = scaled_window_data
             
         return scaled_arr
-
     
     def preprocess_percent_change_robust_rolling_scaling(self, scaling_window_size, scramble, bagging):
+        """Apply percent change and robust rolling scaling to the DataFrame.
+
+        Transforms the DataFrame by first calculating the percentage change for relevant features, then applies
+        robust scaling using a rolling window. This method is designed to normalize feature values and reduce
+        the impact of outliers. Optionally, the method supports scrambling the data to randomize the order 
+        and creating bagged segments for ensemble model training.
+
+        Parameters:
+        - scaling_window_size (int): The size of the rolling window for robust scaling.
+        - scramble (bool): If set to True, randomizes the order of the DataFrame rows.
+        - bagging (bool): If set to True, creates bagged segments from the dataset with replacement.
+
+        Returns:
+        - pd.DataFrame: The DataFrame after applying percentage change transformation and robust rolling scaling.
+        """
         numerical_features = self.df.select_dtypes(include='number').columns.tolist()
         self.df[numerical_features] = self.df[numerical_features] + 0.0001
         self.find_wins()
@@ -585,6 +781,19 @@ class Preprocessor:
         return self.df
     
     def preprocess_percent_change(self, scramble, bagging):
+        """Calculate percent changes for specified columns and optionally scramble or create bagging segments.
+
+        Computes the percentage change for columns relevant to financial analysis (e.g., close prices, volumes)
+        to capture relative changes over time. Can optionally scramble the dataset to randomize the order of rows 
+        or create bagging segments with replacement.
+
+        Parameters:
+        - scramble (bool): If True, randomizes the order of rows in the DataFrame.
+        - bagging (bool): If True, generates bagged segments from the DataFrame with replacement for use in ensemble modeling.
+
+        Returns:
+        - pd.DataFrame: The DataFrame with percentage changes applied to specified columns and any additional requested preprocessing.
+        """
         numerical_features = self.df.select_dtypes(include='number').columns.tolist()
         self.df[numerical_features] = self.df[numerical_features] + 0.0001
         self.find_wins()
@@ -606,8 +815,19 @@ class Preprocessor:
         self.add_preprocessing_row()
         return self.df
     
-    
     def preprocess_percent_change_keep_features(self, scramble, bagging):
+        """Compute percent changes while retaining original features, with options for scrambling and bagging.
+
+        Calculates the percent change for each column specified for transformation, adding these as new columns alongside the original 
+        features in the DataFrame. This approach maintains the raw data while providing transformed features for model training. 
+        
+        Parameters:
+        - scramble (bool): If True, shuffles the order of the DataFrame rows to randomize data presentation.
+        - bagging (bool): If True, creates multiple bagged subsets of the data with replacement, suitable for training ensemble models.
+
+        Returns:
+        - pd.DataFrame: The enhanced DataFrame containing both original and percent change features, after applying optional scrambling or bagging.
+        """
         numerical_features = self.df.select_dtypes(include='number').columns.tolist()
         self.df[numerical_features] = self.df[numerical_features] + 0.0001
         self.find_wins()
@@ -629,9 +849,20 @@ class Preprocessor:
         self.add_preprocessing_row()
         return self.df
     
-    
-    
     def preprocess(self, scramble, bagging):
+        """Preprocess the DataFrame with standard transformations, optionally scrambling or bagging the data.
+
+        Executes a predefined sequence of preprocessing steps on the DataFrame. Includes cleaning, normalization, 
+        and feature engineering. Can optionally randomize the data order or generate bagged data segments to support 
+        diverse modeling approaches like ensemble methods.
+
+        Parameters:
+        - scramble (bool): If set to True, randomizes the order of the DataFrame rows to mitigate sequential bias.
+        - bagging (bool): If set to True, produces bagged versions of the dataset with replacement.
+
+        Returns:
+        - pd.DataFrame: The DataFrame after applying all preprocessing steps, ready for analysis or modeling.
+        """
         pprint(f"Rows in data: {len(self.df)}")
         numerical_features = self.df.select_dtypes(include='number').columns.tolist()
         self.df[numerical_features] = self.df[numerical_features] + 0.0001
@@ -655,8 +886,18 @@ class Preprocessor:
         self.add_preprocessing_row()
         return self.df
     
-    
     def preprocess_log(self, scramble, bagging):
+        """Apply logarithmic transformation to the DataFrame, with options for scrambling and bagging.
+
+        This method transforms the numerical columns in the DataFrame by applying a logarithm.
+
+        Parameters:
+        - scramble (bool): If True, the DataFrame rows are randomized to remove any order bias.
+        - bagging (bool): If True, creates bagged segments from the transformed data with replacement.
+
+        Returns:
+        - pd.DataFrame: The log-transformed DataFrame, potentially scrambled or segmented for bagging, depending on the options selected.
+        """
         pprint(f"Rows in data: {len(self.df)}")
         numerical_features = self.df.select_dtypes(include='number').columns.tolist()
         self.df[numerical_features] = self.df[numerical_features] + 0.0001
@@ -680,9 +921,19 @@ class Preprocessor:
         self.add_preprocessing_row()
         return self.df
     
-    
-    
     def add_indicators(self):
+        """Add technical indicators to the DataFrame as new columns.
+
+        Utilizes the DataAnalyzer instance to calculate and append a variety of technical indicators specified 
+        in the class parameters to the DataFrame. This can include, but is not limited to, the Relative Strength 
+        Index (RSI), moving averages (such as EMA), and others based on the columns indicated for processing.
+
+        Indicators to be added are determined by the 'cols' attribute of the class. The parameters for these calculations, 
+        such as periods for moving averages, are expected to be found in the 'params' attribute.
+
+        Updates the DataFrame in place by adding each indicator as a new column with a prefixed name indicating 
+        the type of indicator (e.g., 'ema', 'rsi').
+        """
         if "rsi" in self.cols:
             self.df['rsi'] = self.data_analyzer.rsi(self.df, self.params['rsi_span'])
         if "stoch_rsi" in self.cols:
@@ -716,6 +967,23 @@ class Preprocessor:
         
     @staticmethod
     def dynamic_fit_transform(dataframe):
+        """Dynamically fit and transform features of a DataFrame using rolling windows.
+
+        Applies a dynamic transformation process to the DataFrame, fitting and transforming features
+        based on rolling windows of data. Handles time-series data where the statistical properties
+        may vary over time. Each window's data is used to fit a transformation model (e.g., scaling or normalization),
+        which is then applied to transform the data within that window.
+
+        - Creates a preprocessing model based on the data within each rolling window.
+        - Applies this model to transform the data in the corresponding window.
+        - Concatenates the transformed segments to form the full transformed DataFrame.
+
+        Parameters:
+        - dataframe (pd.DataFrame): The input DataFrame containing the time-series data to be transformed.
+
+        Returns:
+        - pd.DataFrame: A new DataFrame where each feature has been dynamically fitted and transformed based on rolling windows.
+        """
         def create_preprocessor(reference_data):
             categorical_features = reference_data.select_dtypes(exclude='number').columns.tolist()
             numerical_features = reference_data.select_dtypes(include='number').columns.tolist()
@@ -723,7 +991,7 @@ class Preprocessor:
                 # ('impute', SimpleImputer(strategy='median')),
                 # ('minmax_scaler', MinMaxScaler()),    # Min-max scaling step
                 # ('robust_scaler', RobustScaler()),                
-                # ('scaler', StandardScaler()),
+                ('scaler', StandardScaler()),
             
                 ])
             categories = [['no divergence', 'bullish', 'bearish']]
@@ -751,7 +1019,6 @@ class Preprocessor:
                 return transformed_sample
             
             
-        
         data = dataframe.copy()[::-1].reset_index(drop=True)
         timestamps_and_labels = data[['timestamp', 'win']]
         data = data.drop(['timestamp', 'win'], axis=1)
@@ -761,65 +1028,19 @@ class Preprocessor:
         transformed_data['win'] = timestamps_and_labels['win']
         return transformed_data[::-1].reset_index(drop=True)
     
-    
-    @staticmethod
-    def dynamic_fit_transform(dataframe):
-        def create_preprocessor(reference_data):
-            categorical_features = reference_data.select_dtypes(exclude='number').columns.tolist()
-            numerical_features = reference_data.select_dtypes(include='number').columns.tolist()
-            numeric_pipeline = Pipeline(steps=[
-                # ('impute', SimpleImputer(strategy='median')),
-                # ('minmax_scaler', MinMaxScaler()),    # Min-max scaling step
-                ('robust_scaler', RobustScaler()),                
-                # ('scaler', StandardScaler()),
-            
-                ])
-            categories = [['no divergence', 'bullish', 'bearish']]
-            categorical_pipeline = Pipeline(steps=[
-                # ('impute', SimpleImputer(strategy='most_frequent')),
-                ('one-hot', OneHotEncoder(categories=categories))
-                ])
-        
-            full_processor = ColumnTransformer(transformers=[
-                ('number', numeric_pipeline, numerical_features),
-                ('category', categorical_pipeline, categorical_features)
-                ])
-            full_processor = full_processor.fit(reference_data)
-            return full_processor
-        
-        
-        def _main(data, n):
-            if n < 500:
-                return np.array([np.NaN for c in data.columns]).flatten()
-            else:
-                fit_data = data[n-500:n]
-                preprocessor = create_preprocessor(fit_data)
-                sample = data.iloc[[n]]
-                transformed_sample = preprocessor.transform(sample).flatten()
-                return transformed_sample
-            
-            
-        
-        data = dataframe.copy()[::-1].reset_index(drop=True)
-        timestamps_and_labels = data[['timestamp', 'win']]
-        data = data.drop(['timestamp', 'win'], axis=1)
-        transformed_data = [_main(data, n) for n in range(len(data))]
-        transformed_data = pd.DataFrame(transformed_data)
-        transformed_data['timestamp'] = timestamps_and_labels['timestamp']
-        transformed_data['win'] = timestamps_and_labels['win']
-        return transformed_data[::-1].reset_index(drop=True)
-
-
-    def save_weights(self, segments, column_name="win"):
-        labels = [s[column_name] for s in segments]
-        weights = [l.value_counts(normalize=True)*100 for l in labels]
-        temp_objects_directory = f"G:/coding_projects/model_creation_for_klb/labeled_data/{self.trade_direction}/temp_objects/weights.pkl"
-        temp_objects_directory = Path(temp_objects_directory)
-        joblib.dump(weights, temp_objects_directory)
-        print("Saved weights from preprocessor.")
-        print(f"Path: {temp_objects_directory}.")    
         
     def log_diff(self, original_df):
+        """Apply logarithmic difference transformation to selected columns of a DataFrame.
+
+        Transforms the specified columns of the DataFrame by first taking the natural logarithm of each value, 
+        then calculating the difference between consecutive log-transformed values.
+
+        Parameters:
+        - original_df (pd.DataFrame): The original DataFrame to transform.
+
+        Returns:
+        - pd.DataFrame: A DataFrame with the log-difference transformation applied to the specified columns.
+        """
         df = original_df.copy()
         no_diff = []
         #no_diff = ['obv', 'divergence', 'timestamp', 'win']
@@ -844,6 +1065,16 @@ class Preprocessor:
         return new_df
     
     def log_no_diff(self, original_df):
+        """Apply logarithmic transformation to the specified columns of a DataFrame without differencing.
+
+        Transforms selected columns of the DataFrame by taking the natural logarithm of each value. 
+
+        Parameters:
+        - original_df (pd.DataFrame): The original DataFrame to which the logarithmic transformation will be applied.
+
+        Returns:
+        - pd.DataFrame: The DataFrame after applying the logarithmic transformation to the specified columns.
+        """
         df = original_df.copy()
         no_log = ['obv', 'divergence', 'timestamp', 'win', 'atr']
             
@@ -853,29 +1084,20 @@ class Preprocessor:
         # df_transformed = self.dynamic_fit_transform(new_df)
         return df
     
-    # def diff_df(self, original_df):
-    #     df = original_df.copy()
-    #     no_diff = ['obv', 'divergence', 'timestamp', 'win']
-    #     for col in df.columns:
-    #         if "rsi" in col:
-    #             no_diff.append(col)
-    #         if "ema" in col:
-    #             no_diff.append(col)
-    #         if "atr" in col:
-    #             no_diff.append(col)
-                
-    #     df_no_diff = df[no_diff]
-    #     diff = [item for item in df.columns if item not in df_no_diff]
-    #     df_diff = df[diff]
-    #     df_flipped = df_diff.copy()[::-1]
-    #     df_diff = df_flipped.diff()                                                                              
-    #     df_diff = df_diff[::-1] # reflippening
-    #     new_df = pd.concat([df_diff, df_no_diff], axis=1)
-    #     # df_transformed = self.dynamic_fit_transform(new_df)
-    #     return new_df
-    
     @staticmethod
     def rolling_window_robust_scaler(arr, window_size):
+        """Scale an array using robust scaling within a rolling window.
+
+        Applies a robust scaling method to a numpy array based on a rolling window. Each window's data is scaled 
+        independently, using the median and interquartile range (IQR) to reduce the impact of outliers. 
+
+        Parameters:
+        - arr (np.array): The input array to be scaled. Expected to be a 2D array with scaling applied column-wise.
+        - window_size (int): The size of the rolling window used to calculate the median and IQR for scaling.
+
+        Returns:
+        - np.array: The scaled array, with each window's values transformed based on its local median and IQR.
+        """
         # Ensure input is a numpy array
         arr = np.array(arr)
         
@@ -910,27 +1132,42 @@ class Preprocessor:
         scaled_arr = scaled_arr[:-(window_size-1)]
         
         return scaled_arr
-
-
         
     @staticmethod
     def percentage_change(series):
+        """Calculate the percentage change between consecutive elements in a series.
+
+        This static method computes the percentage change from one element to the next in the input series.
+
+        Parameters:
+        - series (pd.Series): A pandas Series for which the percentage change will be calculated.
+
+        Returns:
+        - pd.Series: A Series containing the percentage changes between consecutive elements.
+        """
         series = series[::-1].pct_change().mul(100)[::-1]
         return series
     
-    
     def percentage_change_scaled(self, scaling_window_size):
+        """Scale the DataFrame by applying percentage change followed by robust scaling with a rolling window.
+
+        First calculates the percentage change for each column in the DataFrame to capture relative changes over time.
+        Then, applies robust scaling using a rolling window approach to reduce the influence of outliers and scale features 
+        to a more uniform range.
+
+        Parameters:
+        - scaling_window_size (int): The size of the rolling window for the robust scaling operation.
+
+        Returns:
+        - pd.DataFrame: The DataFrame after applying percentage change and robust rolling window scaling.
+        """
         df = self.df
         df_cols = df.columns.to_list()
-        
-        # percentage change
         cols_to_derive_percentage_change = ["open", "close", "high", "low", "volume", "amount", "obv"]
         emas = [col for col in df_cols if "ema" in col]
         cols_to_derive_percentage_change += emas
-        
         for col in cols_to_derive_percentage_change:
             df[f"{col}_pct_chg"] = self.percentage_change(df[col])
-            
         timestamps_and_labels = df[['timestamp', 'win']]
         percent_change_columns = [col for col in df.columns.to_list() if "pct_chg" in col]
         pct_chg_df = df[percent_change_columns]
@@ -938,51 +1175,68 @@ class Preprocessor:
         pct_chg_df_array = np.array(pct_chg_df)
         pct_chg_df_array_scaled = pd.DataFrame(self.rolling_window_robust_scaler(pct_chg_df_array, window_size=scaling_window_size), columns=pct_chg_df_saved_columns)
         pct_chg_df = pd.concat([pct_chg_df_array_scaled, timestamps_and_labels], axis=1)
-        
         return pct_chg_df
     
     def apply_percentage_change(self):
+        """Apply percentage change transformation to the DataFrame for specified columns.
+
+        Calculates the percentage change for columns that are relevant to the analysis.
+
+        The method updates the DataFrame in place, adding new columns for each specified feature that represent the percentage 
+        change from the previous row to the current row.
+
+        Returns:
+        - pd.DataFrame: The DataFrame with additional columns representing the percentage change for specified features.
+        """
         df = self.df
         df_cols = df.columns.to_list()
         timestamps_labels = df[['timestamp', 'win']]
-        # percentage change
         cols_to_derive_percentage_change = ["open", "close", "high", "low", "volume", "amount", "obv"]
         emas = [col for col in df_cols if "ema" in col]
         cols_to_derive_percentage_change += emas
-        
         for col in cols_to_derive_percentage_change:
             df[f"{col}_pct_chg"] = self.percentage_change(df[col])
-            
         percent_change_columns = [col for col in df.columns.to_list() if "pct_chg" in col]
         pct_chg_df = df[percent_change_columns]
         pct_chg_df = pd.concat([pct_chg_df, timestamps_labels], axis=1)
-
-        
         return pct_chg_df
     
-    
     def apply_percentage_change_keep_features(self):
+        """Apply percentage change to selected features while retaining the original columns in the DataFrame.
+
+        This method enhances the DataFrame by calculating percentage changes for specified features, such as price or volume,
+        without removing the original columns.
+
+        Returns:
+        - pd.DataFrame: An updated DataFrame including both the original features and their respective percentage changes.
+        """
         df = self.df
         df_cols = df.columns.to_list()
-        timestamps_labels = df[['timestamp', 'win']]
-        # percentage change
         cols_to_derive_percentage_change = ["open", "close", "high", "low", "volume", "amount", "obv"]
         emas = [col for col in df_cols if "ema" in col]
         cols_to_derive_percentage_change += emas
-        
         for col in cols_to_derive_percentage_change:
             df[f"{col}_pct_chg"] = self.percentage_change(df[col])
-            
         percent_change_columns = [col for col in df.columns.to_list() if "pct_chg" in col]
         pct_chg_df = df[percent_change_columns]
         pct_chg_df = pd.concat([pct_chg_df, df], axis=1)
-
-        
         return pct_chg_df
     
     @staticmethod
     def combine_and_filter_features(df, pct_chg_df):
-        
+        """Combine the original DataFrame with percentage change features and filter based on specified criteria.
+
+        This method merges a DataFrame of percentage changes with the original DataFrame to enrich the data with both
+        absolute and relative changes. Post-merging, it applies filtering to remove or select specific features based on
+        predefined criteria.
+
+        Parameters:
+        - df (pd.DataFrame): The original DataFrame containing the full set of features.
+        - pct_chg_df (pd.DataFrame): A DataFrame containing percentage change features for a subset of the original columns.
+
+        Returns:
+        - pd.DataFrame: The combined DataFrame after applying the merge and filter operation, ready for further analysis or modeling.
+        """
         def remove_substring_containing(listA, listB):
             return [string for string in listA if not any(sub in string for sub in listB)]
 
@@ -992,12 +1246,18 @@ class Preprocessor:
         cols = df.columns.to_list()
         new_cols = remove_substring_containing(cols, cols_to_drop)
         df = df[new_cols]
-        
         return df 
-    
     
     @staticmethod
     def drop_nas(df):
+        """Drop rows with NA values from the DataFrame and reset the index.
+
+        Parameters:
+        - df (pd.DataFrame): The DataFrame from which NA values will be removed.
+
+        Returns:
+        - pd.DataFrame: The DataFrame after removing rows with NA values and resetting the index.
+        """
         with_nas = len(df)
         df = df.dropna().reset_index(drop=True)
         without_nas = len(df)
@@ -1005,9 +1265,17 @@ class Preprocessor:
         pprint(f"Dropped {dropped_count} NaN rows. Index reset.")
         return df        
     
-    
     @staticmethod
     def check_if_float64_compatible(data):
+        """Check if the data values are compatible with the float64 type and identify any issues.
+
+        Evaluates a pandas Series or DataFrame to identify values that are infinite, out of the float64 range,
+        or have excessive precision that might cause issues with float64 representation. Reports the problematic values
+        by printing them. Does not modify the data; it only reports potential issues.
+
+        Parameters:
+        - data (pd.Series or pd.DataFrame): The data to check for float64 compatibility.
+        """
         inf_indices = np.isinf(data)
         print(data[inf_indices])
         data.replace([np.inf, -np.inf], np.nan, inplace=True)
@@ -1021,24 +1289,53 @@ class Preprocessor:
             print("Numbers with excessive precision:", data[excessive_precision])
     
     def diff_df(self, data):
+        """Calculate the difference between consecutive rows for numerical columns in the DataFrame.
+
+        Applies a differencing operation to each numerical column in the DataFrame to highlight changes
+        between consecutive rows.
+
+        Parameters:
+        - data (pd.DataFrame): The DataFrame on which to apply the differencing operation.
+
+        Returns:
+        - pd.DataFrame: A DataFrame with the differenced values for each numerical column.
+        """
         df = data.copy()
         numerical_features = df.select_dtypes(include='number').columns.tolist()
         selected_cols = [col for col in numerical_features if col not in ['timestamp', 'win']]
         for col in selected_cols:
             df[col] = self.diff(df[col])
         return df
-                    
 
     @staticmethod
     def move_win_to_end(df):
-    
+        """Reorder the DataFrame columns to move the 'win' column to the end.
+
+        Parameters:
+        - df (pd.DataFrame): The DataFrame whose columns are to be reordered.
+
+        Returns:
+        - pd.DataFrame: The DataFrame with the 'win' column moved to the last position.
+        """
         # Reorder columns
         cols = [col for col in df if col != 'win'] + ['win']
         return df[cols]
-    
 
     @staticmethod
     def create_sample_weights(data, decay_factor): # descending order
+        """Generate sample weights for the data, optionally using exponential decay.
+
+        Produces a series of sample weights for the dataset. If a decay factor is provided, the weights are generated
+        using exponential decay, giving more weight to more recent samples. If no decay factor is provided, linear
+        weights are used, gradually increasing from the oldest to the most recent sample.
+
+        Parameters:
+        - data (pd.DataFrame or pd.Series): The data for which sample weights are to be generated.
+        - decay_factor (float, optional): The factor used for exponential decay weighting. If None, linear weights are generated.
+
+        Returns:
+        - list: A list of sample weights corresponding to each row in the data, with the most recent samples having higher weights.
+        """
         n = len(data)
         print(f"LEN OF DATA: {n}")
         if not decay_factor:
@@ -1051,23 +1348,18 @@ class Preprocessor:
                 
         return weights
     
-    
     def get_percentage_change(self, cols_list, df):
-        """
-        
+        """Calculate percentage changes for specified columns in the DataFrame.
 
-        Parameters
-        ----------
-        cols_list : TYPE list
-            DESCRIPTION. list containing names of columns to apply pct chg to
-        df : TYPE dataframe 
-            DESCRIPTION. includes the selected columns 
+        Computes the percentage change between consecutive rows for each column specified in `cols_list`.
 
-        Returns
-        -------
-        df : TYPE dataframe
-            DESCRIPTION. has added columns containing pct change of selected cols
+        Parameters:
+        - cols_list (list): List of column names in `df` for which to calculate percentage changes.
+        - df (pd.DataFrame): The DataFrame containing the data.
 
+        Returns:
+        - pd.DataFrame: A DataFrame with new columns representing the percentage change for each specified column. The new columns
+        are named with the original column name suffixed by '_pct_chg'.
         """
         cols_list = [col for col in cols_list if col not in ['timestamp', 'win']]
         work_df = df.copy()[cols_list]
@@ -1559,7 +1851,6 @@ class Preprocessor:
         scaled_data = pd.Series(scaled_data)
         return scaled_data
 
-
     def preprocess(self, window_size, scramble, bagging, weight_decay=None, 
                                      lag_count=3, remove_outliers=False,
                                      scale_suffix="base", update_scaler=False):
@@ -1574,7 +1865,6 @@ class Preprocessor:
         # arch models
         arch_model_closes = arch_model(self.df['close'].copy()[::-1].reset_index(drop=True), mean="Zero", vol="GARCH", p=1, q=1)
         arch_model_closes_fitted = arch_model_closes.fit()
-
 
         closes_copy_flipped = self.df['close'].copy()[::-1].reset_index(drop=True)
         mad_df= pd.DataFrame([])
