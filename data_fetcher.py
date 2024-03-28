@@ -2,48 +2,44 @@ import time
 import csv
 import pandas as pd
 import numpy as np 
-
 from datetime import datetime
-
-from headers import ht, process_request, get_headers
-
-
-def time_it(func):    
-    def wrap(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        end = time.time()
-        
-        with open("optimization_log.csv", "a", newline="") as f:
-            msg = func.__name__, end-start, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), args, kwargs
-            writer = csv.writer(f)
-            writer.writerow(msg)
-            print(msg)
-        return result
-    return wrap
+from logging_tools import time_it
+from headers import ht, process_request
 
 
 class DataFetcher:
+    """Fetch and process financial data for a given symbol and timeframe.
+    
+    Attributes:
+        symbol (str): The financial instrument symbol.
+        timeframe (str): candle length.
+    """
+
     def __init__(self, symbol, timeframe):
+        """Initialize the DataFetcher with a symbol and timeframe.
+        
+        Args:
+            symbol (str): The symbol for the financial instrument.
+            timeframe (str): The timeframe for data aggregation.
+        """
         self.symbol = symbol
         self.timeframe = timeframe
+        # Timeframes expressed in minutes
         self.timeframes_in_minutes = {
-        "1min": 1,
-        "3min": 3,
-        "5min": 5, 
-        "15min": 15,
-        "30min": 30,
-        "1hour": 60,
-        "2hour": 120,
-        "4hour": 240,
-        "6hour": 360,
-        "8hour": 480,
-        "12hour": 720,
-        "1day": 1440,
-        "1week": 10080
+            "1min": 1, "3min": 3, "5min": 5, "15min": 15, "30min": 30, "1hour": 60,
+            "2hour": 120, "4hour": 240, "6hour": 360, "8hour": 480, "12hour": 720,
+            "1day": 1440, "1week": 10080
         }
-        
+
     def check_timestamp_sequence(self, df):
+        """Check the sequence of timestamps in the dataframe for any gaps relative to the expected timeframe.
+        
+        Args:
+            df (pandas.DataFrame): The dataframe containing timestamp data to check.
+            
+        Returns:
+            dict: A summary including first timestamp, last timestamp, presence of gaps, and count of timestamps.
+        """
         res = {
             
             "first_timestamp": 0,
@@ -66,6 +62,18 @@ class DataFetcher:
         return res
     
     def get_candles(self, symbol="ETH-USDT", timeframe="5min", start_at=None, end_at=None, delay=0):
+        """Fetch candlestick data for a given symbol and timeframe, with optional start and end timestamps.
+        
+        Args:
+            symbol (str): The symbol for the financial instrument. Default is "ETH-USDT".
+            timeframe (str): The timeframe for data aggregation. Default is "5min".
+            start_at (str): Optional. The start timestamp for the data fetch.
+            end_at (str): Optional. The end timestamp for the data fetch.
+            delay (int): Optional. A delay in seconds before executing the request. Default is 0.
+            
+        Returns:
+            pandas.DataFrame: A dataframe containing the fetched candlestick data.
+        """
         time.sleep(delay)
         if start_at == None and end_at == None:
             start_at, end_at = self._generate_start_and_end()
@@ -97,6 +105,17 @@ class DataFetcher:
 
     @time_it
     def get_mass_candles(self, span, delay=0):
+        """Fetch a large dataset of candlestick data within a specified span.
+
+        This method aggregates multiple candlestick data fetches to compile a large dataset over a given time span for the initialized symbol and timeframe.
+
+        Args:
+            span (int): The time span (in milliseconds) over which to collect candlestick data.
+            delay (int): A delay (in seconds) to wait before each fetch. Useful for rate-limited APIs.
+
+        Returns:
+            pandas.DataFrame: A dataframe containing the aggregated candlestick data.
+        """
         most_recent_timestamp = self.get_candles(
             self.symbol, self.timeframe, delay=delay)['timestamp'][0]
         print(most_recent_timestamp)
@@ -115,6 +134,13 @@ class DataFetcher:
         return df
     
     def _generate_start_and_end(self):
+        """Generate start and end timestamps for fetching data based on the current time and configured timeframe.
+
+        Calculates start and end timestamps to fetch a segment of candlestick data ending at the current time and covering a default span based on the configured timeframe.
+
+        Returns:
+            tuple: A tuple containing the start and end timestamps as strings.
+        """
         now = datetime.now()
         now_as_unixtimestamp = int(time.mktime(now.timetuple()))
         timeframe_in_minutes = self.timeframes_in_minutes[self.timeframe]

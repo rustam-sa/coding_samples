@@ -1,5 +1,7 @@
 work_dir*
 __pycache__
 cachedir
-*log*
+*log
+*log.csv
 find_wins_test.csv
+trader.py
