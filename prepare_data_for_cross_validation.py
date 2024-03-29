@@ -194,10 +194,10 @@ if __name__ == "__main__":
     # count of separate cross validation sets 
     parser.add_argument("--cross_val_count", type=int, default=3) 
     # for each cycle:
-    parser.add_argument("--train_segment_size", type=int, default=6000) 
-    parser.add_argument("--scaler_size", type=int, default=2000)
-    parser.add_argument("--val_segment_size", type=int, default=10000)
-    parser.add_argument("--test_segment_size", type=int, default=10000)
+    parser.add_argument("--train_segment_size", type=int, default=120000) 
+    parser.add_argument("--scaler_size", type=int, default=120000)
+    parser.add_argument("--val_segment_size", type=int, default=40000)
+    parser.add_argument("--test_segment_size", type=int, default=40000)
     parser.add_argument("--num_of_ensemble_evaluation_segments", type=int, default=20)
 
     args = parser.parse_args()
