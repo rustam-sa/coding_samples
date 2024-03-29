@@ -1,6 +1,7 @@
 """Encapsulate functions that create logs
 """
 import time
+import csv
 from datetime import datetime
 
 def time_it(func):
